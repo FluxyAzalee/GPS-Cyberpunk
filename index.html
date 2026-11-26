@@ -1,0 +1,1973 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GPS néon</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --fond: #000;
+    --route: #1fb5c4;
+    --itineraire: #f5f542;
+    --batiment: #c2185b;
+    --texte: #ffb300;
+    --ui: rgba(15, 15, 18, 0.92);
+  }
+  html, body { margin: 0; height: 100%; background: var(--fond); overflow: hidden;
+    font-family: 'Orbitron', system-ui, sans-serif; color: #fff; }
+  #carte { position: absolute; inset: 0; }
+
+  /* Titre : ville + code postal du lieu où on se trouve */
+  #titre { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 14px); left: 16px;
+    font-size: 22px; font-weight: 800; letter-spacing: 1px;
+    text-shadow: 0 0 8px var(--route); pointer-events: none; }
+  #titre small { display: block; font-size: 12px; font-weight: 600; color: var(--itineraire);
+    text-shadow: 0 0 6px var(--itineraire); }
+
+  /* Bandeau de guidage (instruction de virage) */
+  #guidage { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 78px); left: 16px; right: 16px;
+    display: none; padding: 10px 14px; background: var(--ui); border: 1px solid var(--route);
+    border-radius: 6px; box-shadow: 0 0 12px rgba(31, 181, 196, .5); pointer-events: none; }
+  #guidage strong { display: block; font-size: 20px; color: var(--itineraire);
+    text-shadow: 0 0 6px var(--itineraire); }
+  #guidage span { font-size: 13px; }
+
+  /* Réticule au centre */
+  #reticule { position: absolute; top: 50%; left: 50%; width: 60px; height: 60px;
+    transform: translate(-50%, -50%); pointer-events: none; opacity: .8; }
+  #reticule::before, #reticule::after { content: ''; position: absolute; background: #fff; }
+  #reticule::before { left: 50%; top: 0; width: 1px; height: 100%; }
+  #reticule::after { top: 50%; left: 0; height: 1px; width: 100%; }
+
+  /* Boutons ronds à droite */
+  #boutons { position: absolute; right: 14px; bottom: 100px; display: flex; flex-direction: column; gap: 12px; }
+  .bouton { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--route);
+    background: var(--ui); color: var(--route); font-size: 20px; cursor: pointer;
+    box-shadow: 0 0 10px rgba(31, 181, 196, .4); }
+  .bouton:hover, .bouton:focus-visible { color: var(--itineraire); border-color: var(--itineraire);
+    box-shadow: 0 0 12px rgba(245, 245, 66, .6); outline: none; }
+
+  /* Barre d'onglets en bas */
+  #onglets { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-around;
+    padding: 12px 0 calc(env(safe-area-inset-bottom, 0px) + 12px); background: var(--ui);
+    border-top: 1px solid rgba(31, 181, 196, .4); font-size: 11px; }
+  #onglets button { font-family: inherit; font-size: 11px; background: none; border: 0; color: #777;
+    padding: 4px 14px; cursor: pointer; }
+  #onglets button.actif { color: #fff; text-shadow: 0 0 6px var(--route); }
+  #onglets button:focus-visible { outline: 1px solid var(--route); }
+
+  #message { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 150px); left: 16px; right: 16px;
+    font-size: 12px; color: var(--itineraire); text-shadow: 0 0 6px var(--itineraire); pointer-events: none; }
+
+  /* Panneau de l'itinéraire */
+  #infos { position: absolute; left: 16px; right: 80px; bottom: 100px; padding: 10px 14px; display: none;
+    background: var(--ui); border: 1px solid var(--itineraire); border-radius: 6px;
+    box-shadow: 0 0 12px rgba(245, 245, 66, .4); font-size: 13px; }
+  #infos strong { color: var(--itineraire); text-shadow: 0 0 6px var(--itineraire); font-size: 18px; }
+  #infos small { display: block; margin: 4px 0 8px; color: #888; font-size: 10px; }
+  .action { font-family: inherit; font-size: 11px; padding: 6px 10px; margin-right: 6px; cursor: pointer;
+    background: transparent; color: var(--itineraire); border: 1px solid var(--itineraire); border-radius: 4px; }
+  .action:hover, .action:focus-visible { background: var(--itineraire); color: #000; outline: none; }
+
+  /* Choix du mode de déplacement */
+  #modes { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 78px); left: 16px; display: flex; gap: 6px; }
+  .pilule { font-family: inherit; font-size: 11px; padding: 7px 11px; border-radius: 16px; cursor: pointer;
+    background: var(--ui); color: #999; border: 1px solid #444; }
+  .pilule.actif { color: var(--itineraire); border-color: var(--itineraire); box-shadow: 0 0 8px rgba(245, 245, 66, .5); }
+  .bouton.actif { color: #39ff14; border-color: #39ff14; box-shadow: 0 0 12px rgba(57, 255, 20, .6); }
+
+  /* Panneau Itinéraire / Réglages */
+  #panneau { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 50px);
+    max-height: 62%; overflow-y: auto; display: none; padding: 6px 16px 16px; z-index: 5;
+    background: var(--ui); border-top: 1px solid rgba(31, 181, 196, .5); box-shadow: 0 -4px 16px rgba(31, 181, 196, .25); }
+  #panneau label, #panneau p { display: block; font-size: 11px; color: #999; margin: 12px 0 4px; }
+  .champ { display: flex; gap: 6px; align-items: center; }
+  #panneau input[type=text] { flex: 1; min-width: 0; font-family: inherit; font-size: 13px; padding: 9px 10px;
+    background: #000; color: #fff; border: 1px solid var(--route); border-radius: 4px; }
+  #panneau input[type=text]:focus-visible { outline: none; border-color: var(--itineraire); }
+  #panneau select { font-family: inherit; font-size: 12px; padding: 7px; background: #000; color: #fff;
+    border: 1px solid var(--route); border-radius: 4px; }
+  .suggestions { list-style: none; margin: 4px 0 0; padding: 0; }
+  .suggestions li { padding: 9px 10px; font-size: 12px; border-bottom: 1px solid #222; cursor: pointer; }
+  .suggestions li:hover { background: #1b1b22; color: var(--itineraire); }
+  .suggestions li.vide { color: #777; cursor: default; }
+  #liste-lignes label, .choix-affichage label { display: flex; align-items: center; gap: 8px; margin: 6px 0;
+    font-size: 12px; color: #fff; }
+  .pastille { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+  /* Trajets proposés */
+  #infos { left: 12px; right: 74px; bottom: 96px; padding: 10px; max-height: 52%; overflow-y: auto; }
+  #cartes-trajets { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 6px; }
+  #infos .fiche { flex: 0 0 auto; min-width: 116px; text-align: left; font-family: inherit; color: #fff; cursor: pointer;
+    background: #0b0b10; border: 1px solid #333; border-radius: 8px; padding: 8px 10px; }
+  #infos .fiche strong { display: block; font-size: 20px; color: #aaa; text-shadow: none; }
+  #infos .fiche span.detail { display: block; font-size: 10px; color: #888; margin-top: 2px; }
+  #infos .fiche.actif { border-color: var(--itineraire); box-shadow: 0 0 10px rgba(245, 245, 66, .45); }
+  #infos .fiche.actif strong { color: var(--itineraire); text-shadow: 0 0 6px var(--itineraire); }
+  #infos .badge { display: inline-block; font-size: 9px; color: #000; background: var(--itineraire);
+    border-radius: 3px; padding: 1px 5px; margin-bottom: 3px; }
+  #infos .bande { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+  #infos .troncon { font-size: 10px; font-weight: 800; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+  #infos .troncon.marche { background: transparent; color: #bbb; border: 1px dashed #666; font-weight: 600; }
+  #detail-trajet { margin-top: 6px; }
+  #infos .etape-tc { border-left: 4px solid #666; padding: 3px 0 3px 10px; margin: 6px 0; font-size: 12px; }
+  #infos .etape-tc.marche { border-left-style: dashed; }
+  #infos .etape-tc b { display: block; font-weight: 600; }
+  #infos .etape-tc small { display: block; margin: 1px 0 0; color: #999; font-size: 10px; }
+  #infos .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  #infos .actions .action { margin: 0; }
+  .action.principal { background: var(--itineraire); color: #000; font-weight: 800; }
+  #infos.navigation #cartes-trajets, #infos.navigation #detail-trajet { display: none; }
+  #infos.navigation.choix-ouvert #cartes-trajets { display: flex; }
+
+  /* Alerte de perturbation */
+  #alerte { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 190px); left: 16px; right: 16px; display: none;
+    z-index: 6; padding: 10px 12px; background: var(--ui); border: 1px solid #ff3d00; border-radius: 6px;
+    box-shadow: 0 0 14px rgba(255, 61, 0, .6); font-size: 12px; }
+  #alerte strong { display: block; color: #ff6e40; font-size: 14px; text-shadow: 0 0 6px #ff3d00; margin-bottom: 4px; }
+  #alerte .action { margin: 8px 6px 0 0; border-color: #ff6e40; color: #ff6e40; }
+
+  /* Bouchons et perturbations */
+  #trafic-info { margin: 4px 0 6px; font-size: 11px; color: #888; }
+  #trafic-info .fluide { color: #39ff14; }
+  #trafic-info .ligne-trafic { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0; color: #fff; font-size: 12px; }
+  #trafic-info .point { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; margin-top: 3px; box-shadow: 0 0 6px currentColor; }
+  #trafic-info small { display: block; margin: 1px 0 0; color: #999; font-size: 10px; }
+  #infos .fiche .badges { display: block; margin-bottom: 3px; }
+  #infos .fiche .badge { margin-right: 3px; }
+  #infos .fiche .trafic { display: block; margin-top: 5px; font-size: 10px; font-weight: 800; color: #ff5252; }
+  #infos .fiche .trafic.ok { color: #39ff14; }
+
+  /* Hauteur fiable sur téléphone (barre d'adresse) */
+  @supports (height: 100dvh) { html, body { height: 100dvh; } }
+
+  /* Version téléphone */
+  @media (max-width: 640px) {
+    #titre { font-size: 19px; }
+    #modes { top: calc(env(safe-area-inset-top, 0px) + 70px); }
+    .pilule { padding: 9px 12px; }
+    #boutons { top: calc(env(safe-area-inset-top, 0px) + 64px); bottom: auto; right: 10px; gap: 10px; }
+    .bouton { width: 44px; height: 44px; font-size: 18px; }
+    #reticule { display: none; }
+    #guidage { top: calc(env(safe-area-inset-top, 0px) + 70px); left: 12px; right: 66px; }
+    #message { left: 12px; right: 66px; top: calc(env(safe-area-inset-top, 0px) + 120px); }
+    #alerte { top: calc(env(safe-area-inset-top, 0px) + 150px); left: 12px; right: 66px; }
+    #infos { left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom, 0px) + 54px); max-height: 46%; }
+    #infos .fiche { min-width: 136px; }
+    .action { padding: 10px 14px; font-size: 12px; }
+    #panneau { bottom: calc(env(safe-area-inset-bottom, 0px) + 54px); max-height: 70%; }
+    #panneau input[type=text] { font-size: 16px; }
+    #onglets { padding-top: 6px; }
+    #onglets button { padding: 8px 16px; font-size: 12px; }
+  }
+
+  /* Fiche d'un bus */
+  #fiche-bus { position: absolute; left: 12px; right: 74px; bottom: 96px; z-index: 7; display: none; padding: 12px;
+    background: var(--ui); border: 1px solid var(--route); border-radius: 8px; box-shadow: 0 0 14px rgba(31, 181, 196, .5); }
+  #fiche-bus .entete { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  #fiche-bus .numero { min-width: 46px; height: 46px; padding: 0 6px; box-sizing: border-box; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center; font-weight: 800; text-align: center; }
+  #fiche-bus .vers small { display: block; font-size: 10px; color: #999; }
+  #fiche-bus .vers strong { font-size: 15px; }
+  #fiche-bus .rangee { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 4px 0;
+    border-bottom: 1px solid #222; }
+  #fiche-bus .cle { color: #999; }
+  #fiche-bus .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  #fiche-bus .actions .action { margin: 0; }
+  @media (max-width: 640px) {
+    #fiche-bus { left: 8px; right: 8px; bottom: calc(env(safe-area-inset-bottom, 0px) + 54px); }
+  }
+</style>
+</head>
+<body>
+<div id="carte"></div>
+<div id="titre"><span id="ville">Calais</span><small id="cp">62100</small></div>
+<div id="modes">
+  <button class="pilule actif" data-mode="voiture">Voiture</button>
+  <button class="pilule" data-mode="pied">À pied</button>
+  <button class="pilule" data-mode="transport">Transport</button>
+</div>
+<div id="guidage"><strong id="guidage-texte"></strong><span id="guidage-distance"></span></div>
+<div id="reticule"></div>
+<div id="message"></div>
+
+<div id="infos">
+  <div id="cartes-trajets"></div>
+  <div id="trafic-info"></div>
+  <div id="detail-trajet"></div>
+  <div class="actions">
+    <button class="action principal" id="btn-demarrer">Aller</button>
+    <button class="action" id="btn-autres" style="display:none">Autres itinéraires</button>
+    <button class="action" id="btn-arreter" style="display:none">Arrêter</button>
+    <button class="action" id="btn-effacer">Effacer</button>
+  </div>
+</div>
+
+<div id="fiche-bus">
+  <div class="entete">
+    <div class="numero" id="fb-numero">?</div>
+    <div class="vers"><small>Direction</small><strong id="fb-direction">—</strong></div>
+  </div>
+  <div id="fb-details"></div>
+  <div class="actions">
+    <button class="action principal" id="btn-suivre">Suivre ce bus</button>
+    <button class="action" id="btn-fermer-bus">Fermer</button>
+  </div>
+</div>
+
+<div id="alerte">
+  <strong id="alerte-titre"></strong>
+  <span id="alerte-texte"></span><br>
+  <button class="action" id="btn-alerte-autres">Autres itinéraires</button>
+  <button class="action" id="btn-alerte-ok">OK</button>
+</div>
+
+<div id="boutons">
+  <button class="bouton" id="btn-nord" aria-label="Remettre le nord">✕</button>
+  <button class="bouton" id="btn-centre" aria-label="Recentrer sur Calais">⌂</button>
+  <button class="bouton" id="btn-bus" aria-label="Bus en direct">🚌</button>
+  <button class="bouton" id="btn-position" aria-label="Ma position">➤</button>
+</div>
+
+<section id="panneau">
+  <div id="vue-itineraire" style="display:none">
+    <label for="saisie-depart">Départ</label>
+    <div class="champ">
+      <input id="saisie-depart" type="text" placeholder="Ma position" autocomplete="off">
+      <button class="action" id="btn-depart-moi">Moi</button>
+      <button class="action" id="btn-depart-carte">Carte</button>
+    </div>
+    <ul class="suggestions" id="suggestions-depart"></ul>
+    <label for="saisie-arrivee">Arrivée</label>
+    <div class="champ">
+      <input id="saisie-arrivee" type="text" placeholder="Où va-t-on ? (lieu, rue, magasin…)" autocomplete="off">
+      <button class="action" id="btn-arrivee-carte">Carte</button>
+    </div>
+    <ul class="suggestions" id="suggestions-arrivee"></ul>
+  </div>
+  <div id="vue-reglages" style="display:none">
+    <p>Affichage des bus</p>
+    <div class="choix-affichage">
+      <label><input type="radio" name="affichage" value="point"> Un point</label>
+      <label><input type="radio" name="affichage" value="modele"> Un bus en 3D</label>
+    </div>
+    <p>Lignes affichées</p>
+    <div id="liste-lignes"></div>
+    <p>Actualisation des bus</p>
+    <select id="choix-intervalle">
+      <option value="3000">Toutes les 3 s</option>
+      <option value="5000">Toutes les 5 s</option>
+      <option value="10000">Toutes les 10 s</option>
+    </select>
+    <p>Perturbations de trafic en voiture (facultatif)</p>
+    <input id="saisie-cle-tomtom" type="text" placeholder="Clé API TomTom" autocomplete="off">
+    <p style="font-size:10px">Clé gratuite sur developer.tomtom.com. Elle sert à signaler accidents, travaux et bouchons sur ton trajet.</p>
+  </div>
+</section>
+
+<nav id="onglets">
+  <button class="actif" data-vue="carte">Carte</button>
+  <button data-vue="itineraire">Itinéraire</button>
+  <button data-vue="reglages">Réglages</button>
+</nav>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/protobufjs@7.2.6/dist/protobuf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+  // ---------- Réglages ----------
+  const CENTRE_CALAIS = [1.8578, 50.9513];
+  const CLASSES_ROUTES = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor', 'service'];
+  const AUCUN_ITINERAIRE = { type: 'FeatureCollection', features: [] };
+
+  // ---------- Style de la carte (le rendu néon se joue ici) ----------
+  const style = {
+    version: 8,
+    sources: { osm: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' } },
+    layers: [
+      { id: 'fond', type: 'background', paint: { 'background-color': '#000000' } },
+      { id: 'eau', type: 'fill', source: 'osm', 'source-layer': 'water', paint: { 'fill-color': '#050a14' } },
+
+      // Routes : un trait large et flou (halo) + un trait fin et net
+      { id: 'routes-halo', type: 'line', source: 'osm', 'source-layer': 'transportation',
+        filter: ['in', ['get', 'class'], ['literal', CLASSES_ROUTES]],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#1fb5c4', 'line-opacity': 0.35, 'line-blur': 4,
+          'line-width': ['interpolate', ['exponential', 1.5], ['zoom'], 12, 2, 16, 10, 19, 30] } },
+      { id: 'routes', type: 'line', source: 'osm', 'source-layer': 'transportation',
+        filter: ['in', ['get', 'class'], ['literal', CLASSES_ROUTES]],
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: { 'line-color': '#1fb5c4',
+          'line-width': ['interpolate', ['exponential', 1.5], ['zoom'], 12, 0.6, 16, 3, 19, 10] } },
+
+      // Bâtiments en 3D
+      { id: 'batiments', type: 'fill-extrusion', source: 'osm', 'source-layer': 'building', minzoom: 14,
+        paint: { 'fill-extrusion-color': '#c2185b',
+          'fill-extrusion-height': ['coalesce', ['get', 'render_height'], 8],
+          'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], 0],
+          'fill-extrusion-opacity': 0.9 } }
+    ]
+  };
+
+  const carte = new maplibregl.Map({
+    container: 'carte', style: style, center: CENTRE_CALAIS,
+    zoom: 16, pitch: 60, bearing: -20, maxPitch: 75,
+    attributionControl: { compact: true }
+  });
+
+  carte.doubleClickZoom.disable(); // le double toucher sert à choisir l'arrivée
+
+  // ---------- Petits outils ----------
+  const zoneMessage = document.getElementById('message');
+  function afficherMessage(texte, duree) {
+    zoneMessage.textContent = texte;
+    setTimeout(() => { zoneMessage.textContent = ''; }, duree || 4000);
+  }
+
+  // Distance en mètres entre deux points [lon, lat] (formule de haversine)
+  function distanceMetres(a, b) {
+    const rad = Math.PI / 180;
+    const dLat = (b[1] - a[1]) * rad;
+    const dLon = (b[0] - a[0]) * rad;
+    const h = Math.sin(dLat / 2) ** 2 +
+      Math.cos(a[1] * rad) * Math.cos(b[1] * rad) * Math.sin(dLon / 2) ** 2;
+    return 6371000 * 2 * Math.asin(Math.sqrt(h));
+  }
+
+  // Cap (direction en degrés, 0 = nord) pour aller du point a au point b
+  function calculerCap(a, b) {
+    const rad = Math.PI / 180;
+    const dLon = (b[0] - a[0]) * rad;
+    const y = Math.sin(dLon) * Math.cos(b[1] * rad);
+    const x = Math.cos(a[1] * rad) * Math.sin(b[1] * rad) -
+      Math.sin(a[1] * rad) * Math.cos(b[1] * rad) * Math.cos(dLon);
+    return (Math.atan2(y, x) / rad + 360) % 360;
+  }
+
+  function formaterDistance(metres) {
+    if (metres < 1000) return Math.max(10, Math.round(metres / 10) * 10) + ' m';
+    return (metres / 1000).toFixed(1) + ' km';
+  }
+
+  // ---------- Ville et code postal dans le titre ----------
+  // On interroge l'API adresse du gouvernement (France), seulement quand la position change vraiment
+  let derniereZoneLieu = null;
+
+  async function mettreAJourLieu(lonLat) {
+    try {
+      const reponse = await fetch('https://api-adresse.data.gouv.fr/reverse/?lon=' + lonLat[0] + '&lat=' + lonLat[1]);
+      const donnees = await reponse.json();
+      const lieu = donnees.features[0];
+      if (!lieu) return;
+      document.getElementById('ville').textContent = lieu.properties.city;
+      document.getElementById('cp').textContent = lieu.properties.postcode;
+    } catch (erreur) {
+      // pas grave : on garde l'ancien affichage
+    }
+  }
+
+  function verifierLieu(lonLat) {
+    if (derniereZoneLieu && distanceMetres(derniereZoneLieu, lonLat) < 500) return;
+    derniereZoneLieu = lonLat;
+    mettreAJourLieu(lonLat);
+  }
+
+  // ---------- Marqueur de position ----------
+  let marqueurPosition = null;
+
+  function placerMarqueurPosition(lonLat) {
+    if (!marqueurPosition) {
+      const point = document.createElement('div');
+      point.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#f5f542;' +
+        'box-shadow:0 0 14px 4px #f5f542;border:2px solid #000;';
+      marqueurPosition = new maplibregl.Marker({ element: point });
+    }
+    marqueurPosition.setLngLat(lonLat).addTo(carte);
+  }
+
+  // ---------- Boutons de la carte ----------
+  document.getElementById('btn-nord').addEventListener('click', () => {
+    carte.easeTo({ bearing: 0, duration: 800 });
+  });
+
+  document.getElementById('btn-centre').addEventListener('click', () => {
+    carte.flyTo({ center: CENTRE_CALAIS, zoom: 16, pitch: 60, bearing: -20 });
+    verifierLieu(CENTRE_CALAIS);
+  });
+
+  // Ma position : une seule lecture au clic, rien n'est stocké
+  function localiser(quandPret) {
+    if (!navigator.geolocation) {
+      afficherMessage('Géolocalisation non disponible sur ce navigateur.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lonLat = [pos.coords.longitude, pos.coords.latitude];
+        placerMarqueurPosition(lonLat);
+        carte.flyTo({ center: lonLat, zoom: 17 });
+        verifierLieu(lonLat);
+        if (quandPret) quandPret();
+      },
+      () => afficherMessage('Position refusée ou indisponible. Utilise localhost ou https.')
+    );
+  }
+  document.getElementById('btn-position').addEventListener('click', () => localiser());
+
+  // ---------- Itinéraire ----------
+  const zoneInfos = document.getElementById('infos');
+  let marqueurDestination = null;
+  let itineraire = null; // { etapes, coordonnees } quand un trajet est calculé
+
+  carte.on('load', () => {
+    carte.addSource('alternatives', { type: 'geojson', data: AUCUN_ITINERAIRE });
+    carte.addSource('itineraire', { type: 'geojson', data: AUCUN_ITINERAIRE });
+    carte.addSource('arrets', { type: 'geojson', data: AUCUN_ITINERAIRE });
+    carte.addSource('incidents', { type: 'geojson', data: AUCUN_ITINERAIRE });
+
+    // Trajets alternatifs : violet néon, plus discrets que le trajet choisi
+    carte.addLayer({ id: 'alt-halo', type: 'line', source: 'alternatives',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#b388ff', 'line-opacity': 0.2, 'line-blur': 4,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 5, 19, 26] } });
+    carte.addLayer({ id: 'alt-trait', type: 'line', source: 'alternatives',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': '#b388ff', 'line-opacity': 0.75,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1.5, 19, 9] } });
+
+    // Trajet choisi : jaune, ou la couleur de la ligne de bus pour chaque tronçon
+    carte.addLayer({ id: 'itineraire-halo', type: 'line', source: 'itineraire',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': ['coalesce', ['get', 'couleur'], '#f5f542'], 'line-opacity': 0.4, 'line-blur': 6,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 6, 19, 40] } });
+    carte.addLayer({ id: 'itineraire-trait', type: 'line', source: 'itineraire',
+      filter: ['!=', ['get', 'marche'], true],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': ['coalesce', ['get', 'couleur'], '#f5f542'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 19, 14] } });
+    // Bouchons : une bande de couleur (jaune, orange, rouge) sous le trait du trajet
+    carte.addLayer({ id: 'incidents-bande', type: 'line', source: 'incidents',
+      filter: ['==', ['geometry-type'], 'LineString'],
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': ['get', 'couleur'], 'line-opacity': 0.9,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 8, 19, 34] } }, 'itineraire-trait');
+
+    // À pied (trajet à pied ou tronçon à pied d'un trajet en transport) : même jaune, en pointillés
+    carte.addLayer({ id: 'itineraire-marche', type: 'line', source: 'itineraire',
+      filter: ['==', ['get', 'marche'], true],
+      paint: { 'line-color': '#f5f542', 'line-dasharray': [1, 1.2],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 3, 19, 10] } });
+    // Arrêts de montée et de descente
+    carte.addLayer({ id: 'arrets', type: 'circle', source: 'arrets',
+      paint: { 'circle-radius': 6, 'circle-color': '#000000',
+        'circle-stroke-color': ['coalesce', ['get', 'couleur'], '#ffffff'], 'circle-stroke-width': 3 } });
+    // Accidents, travaux et début des bouchons : un point de la couleur de la gravité
+    carte.addLayer({ id: 'incidents-points', type: 'circle', source: 'incidents',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 7, 'circle-color': ['get', 'couleur'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+
+    verifierLieu(CENTRE_CALAIS);
+  });
+
+  function effacerItineraire() {
+    ['itineraire', 'alternatives', 'arrets'].forEach((nom) => carte.getSource(nom).setData(AUCUN_ITINERAIRE));
+    if (marqueurDestination) { marqueurDestination.remove(); marqueurDestination = null; }
+    zoneInfos.style.display = 'none';
+    document.getElementById('alerte').style.display = 'none';
+    propositions = [];
+    itineraire = null;
+    lieuArrivee = null;
+    document.getElementById('saisie-arrivee').value = '';
+    revenirSurPosition();
+  }
+  document.getElementById('btn-effacer').addEventListener('click', effacerItineraire);
+
+  // ---------- Mode de déplacement ----------
+  let mode = 'voiture'; // 'voiture', 'pied' ou 'transport'
+
+  const SERVEURS = {
+    voiture: 'https://router.project-osrm.org/route/v1/driving/',
+    pied: 'https://routing.openstreetmap.de/routed-foot/route/v1/foot/'
+  };
+
+  document.querySelectorAll('.pilule').forEach((bouton) => {
+    bouton.addEventListener('click', () => {
+      mode = bouton.dataset.mode;
+      document.querySelectorAll('.pilule').forEach((b) => b.classList.toggle('actif', b === bouton));
+      if (lieuArrivee) calculerItineraire();
+    });
+  });
+
+  // Décode une polyligne encodée (format Google) en liste de points [lon, lat]
+  function decoderPolyline(texte, precision) {
+    const facteur = Math.pow(10, precision);
+    let index = 0, lat = 0, lon = 0;
+    const points = [];
+    while (index < texte.length) {
+      for (let i = 0; i < 2; i++) {
+        let resultat = 0, decalage = 0, octet;
+        do {
+          octet = texte.charCodeAt(index++) - 63;
+          resultat |= (octet & 0x1f) << decalage;
+          decalage += 5;
+        } while (octet >= 0x20);
+        const delta = (resultat & 1) ? ~(resultat >> 1) : (resultat >> 1);
+        if (i === 0) lat += delta; else lon += delta;
+      }
+      points.push([lon / facteur, lat / facteur]);
+    }
+    return points;
+  }
+
+  // ---------- Trajets proposés ----------
+  let propositions = [];     // liste des trajets possibles
+  let choisie = 0;           // numéro du trajet choisi
+  let memoireTrajet = null;  // { depart, arrivee }, pour cadrer la carte
+
+  function heure(texteIso) {
+    return new Date(texteIso).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Couleur d'une ligne de bus : tes couleurs pour les lignes 1 à 8, sinon celle des horaires, sinon gris
+  function couleurLigne(nom, couleurApi) {
+    const chiffres = nom ? String(nom).match(/\d+/) : null;
+    if (chiffres && COULEURS_LIGNES[chiffres[0]]) return COULEURS_LIGNES[chiffres[0]][0];
+    if (couleurApi) return '#' + String(couleurApi).replace('#', '');
+    return COULEURS_LIGNES['autre'][0];
+  }
+
+  // Texte noir ou blanc selon la clarté de la couleur de fond
+  function texteSurCouleur(couleur) {
+    const r = parseInt(couleur.substr(1, 2), 16);
+    const g = parseInt(couleur.substr(3, 2), 16);
+    const b = parseInt(couleur.substr(5, 2), 16);
+    return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? '#000' : '#fff';
+  }
+
+  // Une requête OSRM. Les requêtes "optionnelles" (sans péage…) renvoient une liste vide si le serveur les refuse.
+  async function demanderRoutes(depart, arrivee, options, evite) {
+    const url = SERVEURS[mode] + depart[0] + ',' + depart[1] + ';' + arrivee[0] + ',' + arrivee[1] +
+      '?overview=full&geometries=geojson&steps=true' + options;
+    try {
+      const donnees = await (await fetch(url)).json();
+      if (donnees.code !== 'Ok') return [];
+      return donnees.routes.map((route) => ({
+        coordonnees: route.geometry.coordinates,
+        etapes: route.legs[0].steps,
+        minutes: Math.max(1, Math.round(route.duration / 60)),
+        distance: route.distance,
+        detail: formaterDistance(route.distance),
+        troncons: null,
+        marcheSeule: mode === 'pied',
+        evite: evite,
+        incidents: [],
+        retardTrafic: 0
+      }));
+    } catch (erreur) {
+      if (evite === null) throw erreur; // la requête principale doit réussir
+      return [];
+    }
+  }
+
+  // Voiture : le trajet normal, son alternative, un trajet sans péage et un trajet sans autoroute.
+  // À pied : le trajet et son alternative.
+  async function chargerPropositionsRoute(depart, arrivee) {
+    const requetes = [demanderRoutes(depart, arrivee, '&alternatives=true', null)];
+    if (mode === 'voiture') {
+      requetes.push(demanderRoutes(depart, arrivee, '&exclude=toll', 'péage'));
+      requetes.push(demanderRoutes(depart, arrivee, '&exclude=motorway', 'autoroute'));
+    }
+    const resultats = await Promise.all(requetes);
+
+    // On écarte les trajets quasi identiques
+    const vus = {};
+    const liste = [];
+    resultats.forEach((routes) => routes.forEach((p) => {
+      const cle = Math.round(p.distance / 100) + '-' + Math.round(p.minutes / 2);
+      if (vus[cle]) return;
+      vus[cle] = true;
+      liste.push(p);
+    }));
+    liste.sort((a, b) => a.minutes - b.minutes); // le plus rapide en premier
+    return liste.slice(0, 4);
+  }
+
+  // Étapes "maison" pour guider un trajet en transport (monter, descendre, arriver)
+  function etapesTransport(troncons) {
+    const fin = (t) => t.coordonnees[t.coordonnees.length - 1];
+    const premier = troncons[0].coordonnees[0];
+    const etapes = [{ distance: distanceMetres(premier, fin(troncons[0])), name: '', maneuver: { type: 'depart', location: premier } }];
+    for (let i = 0; i < troncons.length - 1; i++) {
+      const courant = troncons[i];
+      const suivant = troncons[i + 1];
+      const monter = 'montez dans la ligne ' + suivant.nom + (suivant.direction ? ' vers ' + suivant.direction : '');
+      let texte;
+      if (courant.marche && !suivant.marche) texte = 'Arrêt ' + courant.arretArrivee + ' : ' + monter;
+      else if (!courant.marche && suivant.marche) texte = 'Descendez à ' + courant.arretArrivee;
+      else if (!courant.marche && !suivant.marche) texte = 'Descendez à ' + courant.arretArrivee + ', puis ' + monter;
+      else texte = 'Continuez à pied';
+      etapes.push({ distance: 0, name: '', texte: texte, rayon: 40, maneuver: { type: 'transport', location: fin(courant) } });
+    }
+    const dernier = troncons[troncons.length - 1];
+    etapes.push({ distance: 0, name: '', maneuver: { type: 'arrive', location: fin(dernier) } });
+    return etapes;
+  }
+
+  function construireTrajetTransport(trajet) {
+    let coordonnees = [];
+    const troncons = trajet.legs.map((troncon) => {
+      const geometrie = troncon.legGeometry;
+      const points = decoderPolyline(geometrie.points, geometrie.precision || 6);
+      coordonnees = coordonnees.concat(points);
+      const marche = troncon.mode === 'WALK';
+      const nom = troncon.displayName || troncon.routeShortName || 'Bus';
+      return {
+        marche: marche,
+        nom: nom,
+        direction: troncon.headsign || '',
+        couleur: marche ? '#f5f542' : couleurLigne(nom, troncon.routeColor),
+        coordonnees: points,
+        minutes: Math.max(1, Math.round(troncon.duration / 60)),
+        heureDepart: heure(troncon.startTime),
+        heureArrivee: heure(troncon.endTime),
+        arretDepart: (troncon.from && troncon.from.name) || '',
+        arretArrivee: (troncon.to && troncon.to.name) || ''
+      };
+    });
+    let minutesMarche = 0;
+    troncons.forEach((t) => { if (t.marche) minutesMarche += t.minutes; });
+    return {
+      coordonnees: coordonnees,
+      etapes: etapesTransport(troncons),
+      minutes: Math.max(1, Math.round(trajet.duration / 60)),
+      detail: heure(trajet.startTime) + ' → ' + heure(trajet.endTime) + ' · ' + trajet.transfers + ' corresp.',
+      troncons: troncons,
+      correspondances: trajet.transfers,
+      minutesMarche: minutesMarche,
+      finMs: Date.parse(trajet.endTime),
+      incidents: [],
+      retardTrafic: 0
+    };
+  }
+
+  // Transport en commun (API Transitous, qui regroupe les horaires des réseaux français)
+  async function chargerPropositionsTransport(depart, arrivee) {
+    const url = 'https://api.transitous.org/api/v5/plan' +
+      '?fromPlace=' + depart[1] + ',' + depart[0] +
+      '&toPlace=' + arrivee[1] + ',' + arrivee[0] +
+      '&time=' + encodeURIComponent(new Date().toISOString());
+    const donnees = await (await fetch(url)).json();
+    // Un seul trajet en transport (le premier proposé)
+    const premier = (donnees.itineraries || [])[0];
+    return premier ? [construireTrajetTransport(premier)] : [];
+  }
+
+  function chargerPropositions(depart, arrivee) {
+    return mode === 'transport'
+      ? chargerPropositionsTransport(depart, arrivee)
+      : chargerPropositionsRoute(depart, arrivee);
+  }
+
+  // Bande de pastilles : à pied (pointillés) ou ligne de bus (couleur de la ligne)
+  function bandeTroncons(troncons) {
+    const bande = document.createElement('div');
+    bande.className = 'bande';
+    troncons.forEach((t) => {
+      const pastille = document.createElement('span');
+      pastille.className = 'troncon' + (t.marche ? ' marche' : '');
+      if (t.marche) {
+        pastille.textContent = '🚶 ' + t.minutes + '′';
+      } else {
+        pastille.style.background = t.couleur;
+        pastille.style.color = texteSurCouleur(t.couleur);
+        pastille.textContent = '🚌 ' + t.nom;
+      }
+      bande.appendChild(pastille);
+    });
+    return bande;
+  }
+
+  // Étiquettes qui comparent les trajets entre eux (pas de prix : les données n'en contiennent pas)
+  function etiquettesTrajet(p) {
+    const etiquettes = [];
+    if (propositions.length < 2) return etiquettes;
+    const estLeMeilleur = (champ) => {
+      const valeurs = propositions.map((x) => x[champ]).filter((v) => typeof v === 'number');
+      if (valeurs.length !== propositions.length || typeof p[champ] !== 'number') return false;
+      const minimum = Math.min.apply(null, valeurs);
+      return p[champ] === minimum && minimum < Math.max.apply(null, valeurs);
+    };
+    if (p.evite === 'péage') etiquettes.push('Sans péage');
+    if (p.evite === 'autoroute') etiquettes.push('Sans autoroute');
+    if (estLeMeilleur('minutes')) etiquettes.push('Plus rapide');
+    if (estLeMeilleur('distance')) etiquettes.push('Plus court');
+    if (estLeMeilleur('correspondances')) etiquettes.push('Moins de correspondances');
+    if (estLeMeilleur('minutesMarche')) etiquettes.push('Moins de marche');
+    return etiquettes.slice(0, 2);
+  }
+
+  // Une fiche par trajet : étiquettes, durée, détail, pastilles (transport) et état du trafic (voiture)
+  function afficherCartes() {
+    const zone = document.getElementById('cartes-trajets');
+    zone.innerHTML = '';
+    propositions.forEach((p, i) => {
+      const fiche = document.createElement('button');
+      fiche.className = 'fiche' + (i === choisie ? ' actif' : '');
+
+      const etiquettes = etiquettesTrajet(p);
+      if (etiquettes.length) {
+        const badges = document.createElement('span');
+        badges.className = 'badges';
+        etiquettes.forEach((texte) => {
+          const badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = texte;
+          badges.appendChild(badge);
+        });
+        fiche.appendChild(badges);
+      }
+
+      const duree = document.createElement('strong');
+      duree.textContent = p.minutes + ' min';
+      const detail = document.createElement('span');
+      detail.className = 'detail';
+      detail.textContent = p.detail;
+      fiche.append(duree, detail);
+      if (p.troncons) fiche.appendChild(bandeTroncons(p.troncons));
+
+      if (mode === 'voiture' && reglages.cleTomtom && p.traficCharge) {
+        const trafic = document.createElement('span');
+        trafic.className = 'trafic';
+        if (p.retardTrafic > 0) trafic.textContent = '🔴 +' + p.retardTrafic + ' min de bouchon';
+        else if (p.incidents.length) trafic.textContent = '⚠ ' + p.incidents.length + ' perturbation(s)';
+        else { trafic.textContent = '🟢 Fluide'; trafic.classList.add('ok'); }
+        fiche.appendChild(trafic);
+      }
+
+      fiche.addEventListener('click', () => choisirProposition(i));
+      zone.appendChild(fiche);
+    });
+  }
+
+  // Détail du trajet en transport : une ligne par tronçon, avec la couleur de la ligne
+  function afficherDetail() {
+    const zone = document.getElementById('detail-trajet');
+    zone.innerHTML = '';
+    if (!itineraire || !itineraire.troncons) return;
+    itineraire.troncons.forEach((t) => {
+      const ligne = document.createElement('div');
+      ligne.className = 'etape-tc' + (t.marche ? ' marche' : '');
+      ligne.style.borderLeftColor = t.marche ? '#888' : t.couleur;
+      const titre = document.createElement('b');
+      const detail = document.createElement('small');
+      if (t.marche) {
+        titre.textContent = 'À pied · ' + t.minutes + ' min';
+        detail.textContent = t.heureDepart + ' → ' + t.heureArrivee;
+      } else {
+        titre.textContent = (/^\d/.test(t.nom) ? 'Ligne ' : '') + t.nom + (t.direction ? ' vers ' + t.direction : '');
+        detail.textContent = t.heureDepart + ' ' + t.arretDepart + ' → ' + t.heureArrivee + ' ' + t.arretArrivee;
+      }
+      ligne.append(titre, detail);
+      zone.appendChild(ligne);
+    });
+  }
+
+  // Dessine le trajet choisi (et les autres en violet), les arrêts et le drapeau d'arrivée
+  function appliquerProposition(cadrer) {
+    itineraire = propositions[choisie];
+    const troncons = itineraire.troncons;
+
+    const morceaux = troncons
+      ? troncons.map((t) => ({ type: 'Feature', properties: { couleur: t.couleur, marche: t.marche },
+          geometry: { type: 'LineString', coordinates: t.coordonnees } }))
+      : [{ type: 'Feature', properties: { marche: !!itineraire.marcheSeule },
+          geometry: { type: 'LineString', coordinates: itineraire.coordonnees } }];
+    carte.getSource('itineraire').setData({ type: 'FeatureCollection', features: morceaux });
+
+    const autres = [];
+    propositions.forEach((p, i) => {
+      if (i !== choisie) autres.push({ type: 'Feature', properties: { index: i },
+        geometry: { type: 'LineString', coordinates: p.coordonnees } });
+    });
+    carte.getSource('alternatives').setData({ type: 'FeatureCollection', features: autres });
+
+    const arrets = [];
+    if (troncons) {
+      troncons.forEach((t) => {
+        if (t.marche) return;
+        [t.coordonnees[0], t.coordonnees[t.coordonnees.length - 1]].forEach((point) => {
+          arrets.push({ type: 'Feature', properties: { couleur: t.couleur }, geometry: { type: 'Point', coordinates: point } });
+        });
+      });
+    }
+    carte.getSource('arrets').setData({ type: 'FeatureCollection', features: arrets });
+    dessinerIncidents();
+
+    const arrivee = lieuArrivee ? lieuArrivee.coord : itineraire.coordonnees[itineraire.coordonnees.length - 1];
+    if (!marqueurDestination) {
+      const drapeau = document.createElement('div');
+      drapeau.style.cssText = 'width:14px;height:14px;transform:rotate(45deg);background:#c2185b;' +
+        'border:2px solid #fff;box-shadow:0 0 12px 3px #c2185b;';
+      marqueurDestination = new maplibregl.Marker({ element: drapeau });
+    }
+    marqueurDestination.setLngLat(arrivee).addTo(carte);
+
+    if (navigationActive) indexEtape = 0; // on repart du début du nouveau trajet
+    afficherCartes();
+    afficherDetail();
+    afficherTrafic();
+    majBoutons();
+
+    if (cadrer && memoireTrajet) {
+      const bornes = new maplibregl.LngLatBounds(memoireTrajet.depart, memoireTrajet.depart);
+      propositions.forEach((p) => p.coordonnees.forEach((point) => bornes.extend(point)));
+      carte.fitBounds(bornes, { padding: { top: 130, bottom: 320, left: 40, right: 40 }, maxZoom: 17 });
+    }
+  }
+
+  function choisirProposition(i) {
+    choisie = i;
+    appliquerProposition(false);
+    zoneInfos.classList.remove('choix-ouvert');
+    if (navigationActive) annoncer('Nouvel itinéraire choisi');
+  }
+
+  function afficherPropositions(depart, arrivee) {
+    choisie = 0;
+    perturbationsVues = {};
+    memoireTrajet = { depart: depart, arrivee: arrivee };
+    appliquerProposition(true);
+    zoneInfos.style.display = 'block';
+    zoneInfos.classList.remove('choix-ouvert');
+    verifierPerturbations();
+  }
+
+  // ---------- Choix du départ et de l'arrivée ----------
+  let lieuDepart = null;      // null = ma position (ou le centre de Calais si on ne la connaît pas)
+  let lieuArrivee = null;     // { nom, coord }
+  let marqueurDepart = null;
+  let champEnAttente = null;  // 'depart' ou 'arrivee' : on attend un toucher sur la carte
+
+  // Onglets du bas : Carte / Itinéraire / Réglages
+  function afficherVue(nom) {
+    document.querySelectorAll('#onglets button').forEach((b) => b.classList.toggle('actif', b.dataset.vue === nom));
+    document.getElementById('panneau').style.display = nom === 'carte' ? 'none' : 'block';
+    document.getElementById('vue-itineraire').style.display = nom === 'itineraire' ? 'block' : 'none';
+    document.getElementById('vue-reglages').style.display = nom === 'reglages' ? 'block' : 'none';
+  }
+  document.querySelectorAll('#onglets button').forEach((b) => {
+    b.addEventListener('click', () => afficherVue(b.dataset.vue));
+  });
+
+  function definirDepart(lieu) {
+    lieuDepart = lieu;
+    document.getElementById('saisie-depart').value = lieu ? lieu.nom : '';
+    if (marqueurDepart) { marqueurDepart.remove(); marqueurDepart = null; }
+    if (lieu) {
+      const point = document.createElement('div');
+      point.style.cssText = 'width:14px;height:14px;border-radius:50%;background:#1fb5c4;' +
+        'border:2px solid #fff;box-shadow:0 0 12px 3px #1fb5c4;';
+      marqueurDepart = new maplibregl.Marker({ element: point }).setLngLat(lieu.coord).addTo(carte);
+    }
+  }
+
+  function definirArrivee(lieu) {
+    lieuArrivee = lieu;
+    document.getElementById('saisie-arrivee').value = lieu.nom;
+  }
+
+  // Texte lisible pour un résultat de recherche (Photon)
+  function libelleLieu(p) {
+    const rue = p.street ? (p.housenumber ? p.housenumber + ' ' : '') + p.street : '';
+    const ville = [p.postcode, p.city].filter(Boolean).join(' ');
+    const parties = [p.name, rue, ville].filter(Boolean);
+    return parties.filter((x, i) => parties.indexOf(x) === i).join(', ');
+  }
+
+  // Recherche de lieux (Photon / OpenStreetMap), en favorisant ce qui est près de la carte affichée
+  async function chercherLieux(texte) {
+    const centre = carte.getCenter();
+    const url = 'https://photon.komoot.io/api/?q=' + encodeURIComponent(texte) +
+      '&limit=5&lang=fr&lat=' + centre.lat + '&lon=' + centre.lng;
+    const donnees = await (await fetch(url)).json();
+    return donnees.features.map((f) => ({ nom: libelleLieu(f.properties), coord: f.geometry.coordinates }));
+  }
+
+  // Relie un champ de saisie à sa liste de suggestions (recherche 0,4 s après la dernière frappe)
+  function brancherSaisie(saisie, liste, quandChoisi) {
+    let attente = null;
+    saisie.addEventListener('input', () => {
+      clearTimeout(attente);
+      const texte = saisie.value.trim();
+      liste.innerHTML = '';
+      if (texte.length < 3) return;
+      attente = setTimeout(async () => {
+        try {
+          const lieux = await chercherLieux(texte);
+          liste.innerHTML = '';
+          lieux.forEach((lieu) => {
+            const ligne = document.createElement('li');
+            ligne.textContent = lieu.nom;
+            ligne.addEventListener('click', () => { liste.innerHTML = ''; quandChoisi(lieu); });
+            liste.appendChild(ligne);
+          });
+          if (!lieux.length) liste.innerHTML = '<li class="vide">Aucun résultat</li>';
+        } catch (erreur) {
+          liste.innerHTML = '<li class="vide">Recherche indisponible</li>';
+        }
+      }, 400);
+    });
+  }
+
+  brancherSaisie(document.getElementById('saisie-depart'), document.getElementById('suggestions-depart'), (lieu) => {
+    definirDepart(lieu);
+    carte.flyTo({ center: lieu.coord, zoom: 15 });
+    if (lieuArrivee) { afficherVue('carte'); calculerItineraire(); }
+  });
+
+  brancherSaisie(document.getElementById('saisie-arrivee'), document.getElementById('suggestions-arrivee'), (lieu) => {
+    definirArrivee(lieu);
+    afficherVue('carte');
+    calculerItineraire();
+  });
+
+  // Bouton "Moi" : le départ redevient ma position
+  document.getElementById('btn-depart-moi').addEventListener('click', () => {
+    definirDepart(null);
+    localiser(() => { if (lieuArrivee) { afficherVue('carte'); calculerItineraire(); } });
+  });
+
+  // Boutons "Carte" : on touche la carte pour placer le départ ou l'arrivée
+  function choisirSurCarte(champ) {
+    champEnAttente = champ;
+    afficherVue('carte');
+    afficherMessage(champ === 'depart' ? 'Touche la carte pour placer le départ.' : 'Touche la carte pour placer l\u2019arrivée.');
+  }
+  document.getElementById('btn-depart-carte').addEventListener('click', () => choisirSurCarte('depart'));
+  document.getElementById('btn-arrivee-carte').addEventListener('click', () => choisirSurCarte('arrivee'));
+
+  async function calculerItineraire() {
+    if (!lieuArrivee) {
+      afficherMessage('Choisis maintenant l\u2019arrivée.');
+      return;
+    }
+    const depart = lieuDepart ? lieuDepart.coord : (marqueurPosition ? marqueurPosition.getLngLat().toArray() : CENTRE_CALAIS);
+    try {
+      const liste = await chargerPropositions(depart, lieuArrivee.coord);
+      if (!liste.length) {
+        afficherMessage('Aucun itinéraire trouvé jusqu\u2019à ce point.');
+        return;
+      }
+      propositions = liste;
+      afficherPropositions(depart, lieuArrivee.coord);
+    } catch (erreur) {
+      afficherMessage('Calcul impossible : vérifie ta connexion.');
+    }
+  }
+
+  // Double toucher sur la carte = choisir l'arrivée (un seul toucher ne fait rien : pas de faux clic)
+  let dernierToucher = null; // { temps, x, y }
+
+  carte.on('click', (evenement) => {
+    // Un toucher sur un bus ouvre sa fiche
+    if (carte.getLayer('bus-halo')) {
+      const zoneBus = [[evenement.point.x - 14, evenement.point.y - 14], [evenement.point.x + 14, evenement.point.y + 14]];
+      const touches = carte.queryRenderedFeatures(zoneBus, { layers: ['bus-halo', 'bus-3d'] });
+      if (touches.length) { choisirBus(touches[0].properties.id); return; }
+    }
+
+    if (!carte.getSource('itineraire') || navigationActive) return;
+
+    // Un toucher sur un trajet alternatif (violet) le choisit
+    const zoneToucher = [[evenement.point.x - 12, evenement.point.y - 12], [evenement.point.x + 12, evenement.point.y + 12]];
+    const alternatives = carte.queryRenderedFeatures(zoneToucher, { layers: ['alt-trait'] });
+    if (alternatives.length) { choisirProposition(alternatives[0].properties.index); return; }
+
+    // Avec les boutons "Carte" des réglages d'itinéraire, un seul toucher suffit
+    const maintenant = Date.now();
+    const deuxiemeToucher = dernierToucher !== null && maintenant - dernierToucher.temps < 450 &&
+      Math.hypot(evenement.point.x - dernierToucher.x, evenement.point.y - dernierToucher.y) < 30;
+    if (champEnAttente === null && !deuxiemeToucher) {
+      dernierToucher = { temps: maintenant, x: evenement.point.x, y: evenement.point.y };
+      afficherMessage('Touche deux fois pour choisir ce lieu.', 1500);
+      return;
+    }
+    dernierToucher = null;
+
+    const lieu = { nom: 'Point sur la carte', coord: [evenement.lngLat.lng, evenement.lngLat.lat] };
+    if (champEnAttente === 'depart') definirDepart(lieu);
+    else definirArrivee(lieu);
+    champEnAttente = null;
+    if (lieuArrivee) { afficherVue('carte'); calculerItineraire(); }
+    else afficherVue('itineraire');
+  });
+
+  // ---------- Bus en temps réel (réseau Sitac de Calais) ----------
+  const URL_BUS = 'https://zenbus.net/gtfs/rt/poll.proto?dataset=sitac-calais-rt&src=true';
+  const URL_GTFS = 'https://zenbus.net/gtfs/static/download.zip?dataset=sitac-calais-rt&src=true';
+  // Relais : serveur.py (en local) ou proxy-bus.php (sur ton hébergement) évitent le blocage CORS du navigateur.
+  // On essaie d'abord le relais, puis l'adresse directe.
+  const PROXY_BUS = '/proxy-bus';
+
+  async function telecharger(type) {
+    const adresses = [];
+    if (PROXY_BUS) adresses.push(PROXY_BUS + '?type=' + type);
+    adresses.push(type === 'gtfs' ? URL_GTFS : URL_BUS);
+    for (const adresse of adresses) {
+      try {
+        const reponse = await fetch(adresse);
+        if (reponse.ok) return await reponse.arrayBuffer();
+      } catch (erreur) { /* on essaie l'adresse suivante */ }
+    }
+    throw new Error('Téléchargement impossible : ' + type);
+  }
+
+  // Couleur de chaque ligne ([couleur, nom de la couleur]). "autre" = lignes 10, 13, navettes…
+  const COULEURS_LIGNES = {
+    '1': ['#1b7a2f', 'vert foncé'], '2': ['#e53935', 'rouge'], '3': ['#1a3fbf', 'bleu foncé'],
+    '4': ['#ff8f00', 'orange'], '5': ['#4fc3f7', 'bleu ciel'], '6': ['#fdd835', 'jaune'],
+    '7': ['#8d5524', 'marron'], '8': ['#76ff03', 'vert clair'], 'autre': ['#bdbdbd', 'gris']
+  };
+
+  // Réglages (gardés dans le navigateur pour la prochaine fois)
+  const reglages = { lignes: {}, affichage: 'point', intervalle: 5000, cleTomtom: '' };
+  Object.keys(COULEURS_LIGNES).forEach((cle) => { reglages.lignes[cle] = true; });
+  try {
+    const sauve = JSON.parse(localStorage.getItem('gps-reglages'));
+    if (sauve) {
+      Object.assign(reglages.lignes, sauve.lignes);
+      if (sauve.affichage) reglages.affichage = sauve.affichage;
+      if (sauve.intervalle) reglages.intervalle = sauve.intervalle;
+      if (sauve.cleTomtom) reglages.cleTomtom = sauve.cleTomtom;
+    }
+  } catch (erreur) { /* pas de réglages enregistrés */ }
+  function sauverReglages() {
+    try { localStorage.setItem('gps-reglages', JSON.stringify(reglages)); } catch (erreur) { /* tant pis */ }
+  }
+
+  // Description minimale du format GTFS-RT : on ne garde que la position des véhicules
+  const typeFlux = protobuf.parse(`
+    syntax = "proto2";
+    message FeedMessage { optional FeedHeader header = 1; repeated FeedEntity entity = 2; }
+    message FeedHeader { optional string gtfs_realtime_version = 1; optional uint64 timestamp = 3; }
+    message FeedEntity { optional string id = 1; optional VehiclePosition vehicle = 4; }
+    message VehiclePosition { optional TripDescriptor trip = 1; optional Position position = 2;
+      optional int32 current_status = 4; optional uint64 timestamp = 5; optional string stop_id = 7;
+      optional VehicleDescriptor vehicle = 8; }
+    message TripDescriptor { optional string trip_id = 1; optional string route_id = 5; }
+    message Position { optional float latitude = 1; optional float longitude = 2; optional float bearing = 3; optional float speed = 5; }
+    message VehicleDescriptor { optional string id = 1; optional string label = 2; }
+  `).root.lookupType('FeedMessage');
+
+  // Numéros de ligne : on les lit dans les horaires théoriques (routes.txt et trips.txt du GTFS)
+  const infosLignes = { parRoute: {}, parTrajet: {}, parNumeroRoute: {}, parNumeroTrajet: {},
+    parTrajetInfo: {}, parNumeroTrajetInfo: {}, arrets: {}, zip: null, texteFormes: null, formes: {}, chargees: false };
+
+  // Les identifiants du flux et des horaires peuvent différer par un préfixe ou un suffixe :
+  // on retient aussi la longue suite de chiffres qu'ils contiennent
+  function indexerNumeros(table, identifiant, nom) {
+    (String(identifiant).match(/\d{5,}/g) || []).forEach((groupe) => { table[groupe] = nom; });
+  }
+
+  function trouverNom(identifiant, exacts, parNumero) {
+    if (!identifiant) return undefined;
+    if (exacts[identifiant]) return exacts[identifiant];
+    const groupes = String(identifiant).match(/\d{5,}/g) || [];
+    for (const groupe of groupes) {
+      if (parNumero[groupe]) return parNumero[groupe];
+    }
+    return undefined;
+  }
+
+  // Lit un fichier CSV du GTFS et renvoie une liste d'objets
+  function lireCsv(texte) {
+    const lignes = texte.replace(/^\uFEFF/, '').split(/\r?\n/).filter((l) => l.length > 0);
+    const decouper = (ligne) => {
+      const cases = [];
+      let courant = '';
+      let entreGuillemets = false;
+      for (const caractere of ligne) {
+        if (caractere === '"') entreGuillemets = !entreGuillemets;
+        else if (caractere === ',' && !entreGuillemets) { cases.push(courant); courant = ''; }
+        else courant += caractere;
+      }
+      cases.push(courant);
+      return cases;
+    };
+    const entetes = decouper(lignes[0]);
+    return lignes.slice(1).map((l) => {
+      const valeurs = decouper(l);
+      const objet = {};
+      entetes.forEach((entete, i) => { objet[entete] = valeurs[i]; });
+      return objet;
+    });
+  }
+
+  async function chargerLignes() {
+    if (infosLignes.chargees) return;
+    try {
+      const zip = await JSZip.loadAsync(await telecharger('gtfs'));
+      infosLignes.zip = zip; // gardé pour lire le tracé des lignes (shapes.txt) quand on touche un bus
+      lireCsv(await zip.file('routes.txt').async('string')).forEach((r) => {
+        const nom = r.route_short_name || r.route_long_name;
+        infosLignes.parRoute[r.route_id] = nom;
+        indexerNumeros(infosLignes.parNumeroRoute, r.route_id, nom);
+      });
+      lireCsv(await zip.file('trips.txt').async('string')).forEach((t) => {
+        const nom = infosLignes.parRoute[t.route_id];
+        infosLignes.parTrajet[t.trip_id] = nom;
+        indexerNumeros(infosLignes.parNumeroTrajet, t.trip_id, nom);
+        const info = { direction: t.trip_headsign || '', forme: t.shape_id || '' };
+        infosLignes.parTrajetInfo[t.trip_id] = info;
+        indexerNumeros(infosLignes.parNumeroTrajetInfo, t.trip_id, info);
+      });
+      if (zip.file('stops.txt')) {
+        lireCsv(await zip.file('stops.txt').async('string')).forEach((a) => {
+          infosLignes.arrets[a.stop_id] = a.stop_name;
+        });
+      }
+      infosLignes.chargees = true;
+    } catch (erreur) {
+      console.warn('Horaires théoriques indisponibles : les bus seront tous gris.', erreur);
+    }
+  }
+
+  // Renvoie la clé de couleur ('1' à '8' ou 'autre') du véhicule
+  function trouverLigne(vehicule) {
+    const trajet = vehicule.trip || {};
+    const nom = trouverNom(trajet.routeId, infosLignes.parRoute, infosLignes.parNumeroRoute) ||
+      trouverNom(trajet.tripId, infosLignes.parTrajet, infosLignes.parNumeroTrajet);
+    const chiffres = nom ? String(nom).match(/\d+/) : null;
+    const cle = chiffres ? chiffres[0] : null;
+    return (cle && cle !== 'autre' && COULEURS_LIGNES[cle]) ? cle : 'autre';
+  }
+
+  // Les bus sont animés : chaque mise à jour du flux donne une cible, et on glisse vers elle
+  const flotte = {};   // identifiant du bus -> { de, vers, debut, duree, cap, ligne }
+  let busActifs = false;
+  let idBus = null;            // setInterval du chargement
+  let idAnimation = null;      // requestAnimationFrame du dessin
+  let dernierDessin = 0;
+  let diagnosticFait = false;
+  let bilanBus = { total: 0, inconnues: 0 };
+
+  function positionAffichee(b, maintenant) {
+    const k = Math.min(1, (maintenant - b.debut) / b.duree);
+    return [b.de[0] + (b.vers[0] - b.de[0]) * k, b.de[1] + (b.vers[1] - b.de[1]) * k];
+  }
+
+  function mettreAJourBus(flux) {
+    const maintenant = performance.now();
+    const presents = {};
+    const exemplesRoutes = [];
+    const exemplesTrajets = [];
+    let total = 0;
+    let inconnues = 0;
+    flux.entity.forEach((entite) => {
+      const v = entite.vehicle;
+      const position = v && v.position;
+      if (!position) return;
+      const id = (v.vehicle && v.vehicle.id) || entite.id;
+      const cible = [position.longitude, position.latitude];
+      presents[id] = true;
+      if (v.trip && v.trip.routeId && exemplesRoutes.length < 10) exemplesRoutes.push(v.trip.routeId);
+      if (v.trip && v.trip.tripId && exemplesTrajets.length < 5) exemplesTrajets.push(v.trip.tripId);
+      const ligne = trouverLigne(v);
+      total++;
+      if (ligne === 'autre') inconnues++;
+
+      const ancien = flotte[id];
+      if (!ancien) {
+        const capFlux = Object.prototype.hasOwnProperty.call(position, 'bearing') ? position.bearing : 0;
+        flotte[id] = { de: cible, vers: cible, debut: maintenant, duree: 1, cap: capFlux, ligne: ligne };
+        Object.assign(flotte[id], detailsBus(v, position, id));
+        return;
+      }
+      const actuelle = positionAffichee(ancien, maintenant);
+      if (distanceMetres(ancien.vers, cible) > 3) ancien.cap = calculerCap(ancien.vers, cible);
+      ancien.de = distanceMetres(actuelle, cible) > 500 ? cible : actuelle;
+      ancien.vers = cible;
+      ancien.debut = maintenant;
+      ancien.duree = reglages.intervalle;
+      ancien.ligne = ligne;
+      Object.assign(ancien, detailsBus(v, position, id));
+    });
+    Object.keys(flotte).forEach((id) => { if (!presents[id]) delete flotte[id]; });
+    bilanBus = { total: total, inconnues: inconnues };
+
+    // Pour comprendre d'où vient un bus gris : on affiche une fois ce que contient le flux
+    if (!diagnosticFait) {
+      diagnosticFait = true;
+      console.log('Bus - diagnostic', {
+        horairesCharges: infosLignes.chargees,
+        routeIdDuFlux: exemplesRoutes,
+        tripIdDuFlux: exemplesTrajets,
+        routesDesHoraires: Object.entries(infosLignes.parRoute).slice(0, 10)
+      });
+    }
+  }
+
+  // Rectangle de 16 m sur 3 m orienté selon le cap, pour le bus en 3D
+  function rectangleBus(centre, cap, couleur) {
+    const rad = Math.PI / 180;
+    const avant = [Math.sin(cap * rad), Math.cos(cap * rad)];    // (est, nord)
+    const droite = [Math.cos(cap * rad), -Math.sin(cap * rad)];
+    const demiLongueur = 8;
+    const demiLargeur = 1.6;
+    const metreParDegre = 111320;
+    const coins = [[1, 1], [1, -1], [-1, -1], [-1, 1], [1, 1]].map((signe) => {
+      const x = avant[0] * demiLongueur * signe[0] + droite[0] * demiLargeur * signe[1];
+      const y = avant[1] * demiLongueur * signe[0] + droite[1] * demiLargeur * signe[1];
+      return [centre[0] + x / (metreParDegre * Math.cos(centre[1] * rad)), centre[1] + y / metreParDegre];
+    });
+    return { type: 'Feature', properties: { couleur: couleur }, geometry: { type: 'Polygon', coordinates: [coins] } };
+  }
+
+  function dessinerBus(maintenant) {
+    const points = [];
+    const volumes = [];
+    let selection = null;
+    Object.keys(flotte).forEach((id) => {
+      const b = flotte[id];
+      if (!reglages.lignes[b.ligne]) return;
+      const centre = positionAffichee(b, maintenant);
+      const couleur = COULEURS_LIGNES[b.ligne][0];
+      points.push({ type: 'Feature', properties: { couleur: couleur, cap: b.cap, id: id },
+        geometry: { type: 'Point', coordinates: centre } });
+      if (reglages.affichage === 'modele') {
+        const volume = rectangleBus(centre, b.cap, couleur);
+        volume.properties.id = id;
+        volumes.push(volume);
+      }
+      if (id === busChoisi) selection = centre;
+    });
+    carte.getSource('bus').setData({ type: 'FeatureCollection', features: points });
+    carte.getSource('bus3d').setData({ type: 'FeatureCollection', features: volumes });
+    carte.getSource('bus-select').setData(selection
+      ? { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: selection } }
+      : AUCUN_ITINERAIRE);
+    if (selection && suivreBus) carte.setCenter(selection);
+  }
+
+  function boucleBus(maintenant) {
+    if (maintenant - dernierDessin > 50) { // environ 20 images par seconde
+      dessinerBus(maintenant);
+      dernierDessin = maintenant;
+    }
+    idAnimation = requestAnimationFrame(boucleBus);
+  }
+
+  carte.on('load', () => {
+    carte.addSource('bus', { type: 'geojson', data: AUCUN_ITINERAIRE });
+    carte.addSource('bus3d', { type: 'geojson', data: AUCUN_ITINERAIRE });
+    carte.addSource('bus-trace', { type: 'geojson', data: AUCUN_ITINERAIRE });
+    carte.addSource('bus-select', { type: 'geojson', data: AUCUN_ITINERAIRE });
+    carte.addImage('fleche', creerFleche());
+
+    // Tracé de la ligne du bus touché, avec des flèches qui montrent le sens
+    carte.addLayer({ id: 'bus-trace-halo', type: 'line', source: 'bus-trace',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': ['get', 'couleur'], 'line-opacity': 0.35, 'line-blur': 5,
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 6, 19, 30] } });
+    carte.addLayer({ id: 'bus-trace', type: 'line', source: 'bus-trace',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: { 'line-color': ['get', 'couleur'],
+        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 2, 19, 8] } });
+    carte.addLayer({ id: 'bus-trace-fleches', type: 'symbol', source: 'bus-trace',
+      layout: { 'symbol-placement': 'line', 'symbol-spacing': 70, 'icon-image': 'fleche', 'icon-size': 0.5,
+        'icon-rotate': 90, 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
+    carte.addLayer({ id: 'bus-3d', type: 'fill-extrusion', source: 'bus3d',
+      paint: { 'fill-extrusion-color': ['get', 'couleur'], 'fill-extrusion-height': 4, 'fill-extrusion-base': 0.3 } });
+    carte.addLayer({ id: 'bus-halo', type: 'circle', source: 'bus',
+      paint: { 'circle-radius': 14, 'circle-color': ['get', 'couleur'], 'circle-opacity': 0.35, 'circle-blur': 1 } });
+    carte.addLayer({ id: 'bus-point', type: 'circle', source: 'bus',
+      paint: { 'circle-radius': 9, 'circle-color': ['get', 'couleur'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 1.5 } });
+    // Flèche blanche sur chaque bus : elle montre vers où il roule
+    carte.addLayer({ id: 'bus-fleche', type: 'symbol', source: 'bus',
+      layout: { 'icon-image': 'fleche', 'icon-size': 0.45, 'icon-rotate': ['get', 'cap'],
+        'icon-rotation-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true } });
+    // Anneau autour du bus choisi
+    carte.addLayer({ id: 'bus-selection', type: 'circle', source: 'bus-select',
+      paint: { 'circle-radius': 22, 'circle-color': '#ffffff', 'circle-opacity': 0,
+        'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2 } });
+    appliquerAffichage();
+  });
+
+  // Dessine une flèche (pointe vers le haut) pour les calques
+  function creerFleche() {
+    const toile = document.createElement('canvas');
+    toile.width = 32;
+    toile.height = 32;
+    const crayon = toile.getContext('2d');
+    crayon.beginPath();
+    crayon.moveTo(16, 3);
+    crayon.lineTo(27, 28);
+    crayon.lineTo(16, 22);
+    crayon.lineTo(5, 28);
+    crayon.closePath();
+    crayon.fillStyle = '#ffffff';
+    crayon.fill();
+    crayon.lineWidth = 2;
+    crayon.strokeStyle = '#000000';
+    crayon.stroke();
+    return crayon.getImageData(0, 0, 32, 32);
+  }
+
+  // Point ou bus en 3D selon le réglage
+  function appliquerAffichage() {
+    if (!carte.getLayer('bus-3d')) return;
+    const modele = reglages.affichage === 'modele';
+    carte.setLayoutProperty('bus-3d', 'visibility', modele ? 'visible' : 'none');
+    carte.setLayoutProperty('bus-point', 'visibility', modele ? 'none' : 'visible');
+  }
+
+  async function chargerBus(premier) {
+    try {
+      const flux = typeFlux.decode(new Uint8Array(await telecharger('rt')));
+      mettreAJourBus(flux);
+      if (busChoisi !== null) afficherFicheBus();
+      if (premier) {
+        if (bilanBus.total > 0 && bilanBus.inconnues === bilanBus.total) {
+          afficherMessage(infosLignes.chargees
+            ? 'Numéros de ligne non reconnus : les identifiants du flux ne correspondent pas aux horaires (console F12).'
+            : 'Horaires théoriques non chargés, donc pas de numéros de ligne (console F12).', 9000);
+        } else {
+          afficherMessage(Object.keys(flotte).length + ' bus en circulation');
+        }
+      }
+    } catch (erreur) {
+      if (premier) {
+        afficherMessage('Bus indisponibles : le navigateur bloque peut-être le flux (lance serveur.py, voir le mode d’emploi).');
+        basculerBus(false);
+      }
+    }
+  }
+
+  function demarrerRafraichissement() {
+    clearInterval(idBus);
+    idBus = setInterval(() => chargerBus(false), reglages.intervalle);
+  }
+
+  function basculerBus(etat) {
+    busActifs = etat;
+    document.getElementById('btn-bus').classList.toggle('actif', etat);
+    if (etat) {
+      chargerLignes().then(() => chargerBus(true));
+      demarrerRafraichissement();
+      idAnimation = requestAnimationFrame(boucleBus);
+    } else {
+      clearInterval(idBus);
+      cancelAnimationFrame(idAnimation);
+      fermerFicheBus();
+      Object.keys(flotte).forEach((id) => { delete flotte[id]; });
+      dessinerBus(performance.now());
+    }
+  }
+  document.getElementById('btn-bus').addEventListener('click', () => basculerBus(!busActifs));
+
+  // ---------- Fiche d'un bus (on touche un bus sur la carte) ----------
+  let busChoisi = null;   // identifiant du bus affiché
+  let suivreBus = false;  // la carte suit ce bus
+
+  // Cherche les infos d'un trajet (direction, tracé) : identifiant exact, sinon longue suite de chiffres
+  function trouverInfoTrajet(tripId) {
+    if (!tripId) return null;
+    if (infosLignes.parTrajetInfo[tripId]) return infosLignes.parTrajetInfo[tripId];
+    const groupes = String(tripId).match(/\d{5,}/g) || [];
+    for (const groupe of groupes) {
+      if (infosLignes.parNumeroTrajetInfo[groupe]) return infosLignes.parNumeroTrajetInfo[groupe];
+    }
+    return null;
+  }
+
+  // Ce qu'on sait d'un bus : ligne, direction, vitesse, prochain arrêt…
+  function detailsBus(v, position, id) {
+    const trajet = v.trip || {};
+    const info = trouverInfoTrajet(trajet.tripId);
+    const nomLigne = trouverNom(trajet.routeId, infosLignes.parRoute, infosLignes.parNumeroRoute) ||
+      trouverNom(trajet.tripId, infosLignes.parTrajet, infosLignes.parNumeroTrajet) || '';
+    const aVitesse = Object.prototype.hasOwnProperty.call(position, 'speed');
+    const aStatut = Object.prototype.hasOwnProperty.call(v, 'currentStatus');
+    return {
+      nomLigne: nomLigne,
+      direction: info ? info.direction : '',
+      forme: info ? info.forme : '',
+      vitesse: aVitesse ? position.speed * 3.6 : null,
+      arretId: v.stopId || '',
+      statut: aStatut ? v.currentStatus : null,
+      etiquette: (v.vehicle && (v.vehicle.label || v.vehicle.id)) || id
+    };
+  }
+
+  // Points du tracé d'une ligne (shapes.txt des horaires), dans le sens de circulation
+  async function chargerForme(idForme) {
+    if (!idForme || !infosLignes.zip || !infosLignes.zip.file('shapes.txt')) return null;
+    if (infosLignes.formes[idForme]) return infosLignes.formes[idForme];
+    if (!infosLignes.texteFormes) infosLignes.texteFormes = await infosLignes.zip.file('shapes.txt').async('string');
+    const lignes = infosLignes.texteFormes.split(/\r?\n/);
+    const entetes = lignes[0].replace(/^\uFEFF/, '').split(',').map((e) => e.replace(/"/g, ''));
+    const iId = entetes.indexOf('shape_id');
+    const iLat = entetes.indexOf('shape_pt_lat');
+    const iLon = entetes.indexOf('shape_pt_lon');
+    const iSeq = entetes.indexOf('shape_pt_sequence');
+    const points = [];
+    for (let i = 1; i < lignes.length; i++) {
+      const cases = lignes[i].split(',');
+      if (cases[iId] && cases[iId].replace(/"/g, '') === idForme) {
+        points.push([Number(cases[iSeq]), Number(cases[iLon]), Number(cases[iLat])]);
+      }
+    }
+    points.sort((a, b) => a[0] - b[0]);
+    infosLignes.formes[idForme] = points.map((p) => [p[1], p[2]]);
+    return infosLignes.formes[idForme];
+  }
+
+  async function choisirBus(id) {
+    busChoisi = id;
+    suivreBus = false;
+    carte.getSource('bus-trace').setData(AUCUN_ITINERAIRE);
+    afficherFicheBus();
+    const b = flotte[id];
+    if (!b || !b.forme) return;
+    const points = await chargerForme(b.forme);
+    if (busChoisi !== id || !points || points.length < 2) return;
+    carte.getSource('bus-trace').setData({ type: 'Feature', properties: { couleur: COULEURS_LIGNES[b.ligne][0] },
+      geometry: { type: 'LineString', coordinates: points } });
+  }
+
+  function fermerFicheBus() {
+    busChoisi = null;
+    suivreBus = false;
+    document.getElementById('fiche-bus').style.display = 'none';
+    zoneInfos.style.visibility = '';
+    if (carte.getSource('bus-trace')) carte.getSource('bus-trace').setData(AUCUN_ITINERAIRE);
+  }
+
+  function afficherFicheBus() {
+    const b = busChoisi !== null ? flotte[busChoisi] : null;
+    if (!b) {
+      if (busChoisi !== null) { fermerFicheBus(); afficherMessage('Ce bus n\u2019est plus en service.'); }
+      return;
+    }
+    const couleur = COULEURS_LIGNES[b.ligne][0];
+    const numero = document.getElementById('fb-numero');
+    numero.textContent = b.nomLigne || '?';
+    numero.style.fontSize = b.nomLigne.length > 2 ? '12px' : '22px';
+    numero.style.background = couleur;
+    numero.style.color = texteSurCouleur(couleur);
+    document.getElementById('fb-direction').textContent = b.direction || 'Direction inconnue';
+
+    const rangees = [];
+    const nomArret = infosLignes.arrets[b.arretId];
+    if (nomArret) rangees.push([b.statut === 1 ? 'À l\u2019arrêt' : 'Prochain arrêt', nomArret]);
+    if (b.vitesse !== null) rangees.push(['Vitesse', Math.round(b.vitesse) + ' km/h']);
+    rangees.push(['Véhicule', b.etiquette]);
+    if (!infosLignes.chargees) rangees.push(['Ligne', 'inconnue (horaires non chargés)']);
+
+    const zone = document.getElementById('fb-details');
+    zone.innerHTML = '';
+    rangees.forEach((rangee) => {
+      const ligne = document.createElement('div');
+      ligne.className = 'rangee';
+      const cle = document.createElement('span');
+      cle.className = 'cle';
+      cle.textContent = rangee[0];
+      const valeur = document.createElement('span');
+      valeur.textContent = rangee[1];
+      ligne.append(cle, valeur);
+      zone.appendChild(ligne);
+    });
+
+    document.getElementById('btn-suivre').textContent = suivreBus ? 'Ne plus suivre' : 'Suivre ce bus';
+    document.getElementById('fiche-bus').style.display = 'block';
+    zoneInfos.style.visibility = 'hidden'; // la fiche prend la place du panneau des trajets
+  }
+
+  document.getElementById('btn-fermer-bus').addEventListener('click', fermerFicheBus);
+  document.getElementById('btn-suivre').addEventListener('click', () => {
+    suivreBus = !suivreBus;
+    afficherFicheBus();
+  });
+  carte.on('dragstart', () => {
+    if (suivreBus) { suivreBus = false; if (busChoisi !== null) afficherFicheBus(); }
+  });
+
+  // ---------- Réglages des bus (onglet Réglages) ----------
+  document.querySelectorAll('input[name="affichage"]').forEach((radio) => {
+    radio.checked = radio.value === reglages.affichage;
+    radio.addEventListener('change', () => {
+      reglages.affichage = radio.value;
+      sauverReglages();
+      appliquerAffichage();
+    });
+  });
+
+  const listeLignes = document.getElementById('liste-lignes');
+  Object.keys(COULEURS_LIGNES).forEach((cle) => {
+    const etiquette = document.createElement('label');
+    const caseLigne = document.createElement('input');
+    caseLigne.type = 'checkbox';
+    caseLigne.checked = reglages.lignes[cle];
+    caseLigne.addEventListener('change', () => {
+      reglages.lignes[cle] = caseLigne.checked;
+      sauverReglages();
+    });
+    const pastille = document.createElement('span');
+    pastille.className = 'pastille';
+    pastille.style.background = COULEURS_LIGNES[cle][0];
+    etiquette.append(caseLigne, pastille,
+      cle === 'autre' ? 'Autres lignes (10, 13, navettes…)' : 'Ligne ' + cle + ' (' + COULEURS_LIGNES[cle][1] + ')');
+    listeLignes.appendChild(etiquette);
+  });
+
+  const choixIntervalle = document.getElementById('choix-intervalle');
+  choixIntervalle.value = String(reglages.intervalle);
+  choixIntervalle.addEventListener('change', () => {
+    reglages.intervalle = Number(choixIntervalle.value);
+    sauverReglages();
+    if (busActifs) demarrerRafraichissement();
+  });
+
+  // ---------- Navigation ----------
+  let navigationActive = false;
+  let indexEtape = 0;          // étape en cours dans la liste d'étapes
+  let dernierePosition = null;
+  let idSuivi = null;          // identifiant du watchPosition (position réelle)
+  let dernierRecalcul = 0;
+  let ecartsConsecutifs = 0;
+  let derniereVerifTrafic = 0;
+  let perturbationsVues = {};
+
+  const boutonAller = document.getElementById('btn-demarrer');
+  const boutonAutres = document.getElementById('btn-autres');
+  const boutonArreter = document.getElementById('btn-arreter');
+  const boutonEffacer = document.getElementById('btn-effacer');
+  const bandeau = document.getElementById('guidage');
+
+  // Affiche les bons boutons selon l'état (trajet prêt, navigation en cours…)
+  function majBoutons() {
+    const pret = itineraire !== null;
+    const avant = pret && !navigationActive ? 'inline-block' : 'none';
+    boutonAller.style.display = avant;
+    boutonEffacer.style.display = avant;
+    boutonAutres.style.display = navigationActive ? 'inline-block' : 'none';
+    boutonArreter.style.display = navigationActive ? 'inline-block' : 'none';
+  }
+
+  // Une seule lecture de la position, sous forme de promesse
+  function positionActuelle() {
+    return new Promise((resoudre, rejeter) => {
+      if (!navigator.geolocation) { rejeter(new Error('indisponible')); return; }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resoudre([pos.coords.longitude, pos.coords.latitude]),
+        rejeter,
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
+      );
+    });
+  }
+
+  // Après une annulation ou la fin du trajet : la carte revient sur ta position
+  async function revenirSurPosition() {
+    let cible = marqueurPosition ? marqueurPosition.getLngLat().toArray() : CENTRE_CALAIS;
+    try {
+      cible = await positionActuelle();
+      placerMarqueurPosition(cible);
+    } catch (erreur) { /* on garde la dernière position connue */ }
+    carte.flyTo({ center: cible, zoom: 16, pitch: 60, bearing: -20, offset: [0, 0] });
+    verifierLieu(cible);
+  }
+
+  // Distance en mètres d'un point à un segment [a, b]
+  function distanceSegment(p, a, b) {
+    const k = Math.cos(p[1] * Math.PI / 180);
+    const ax = (a[0] - p[0]) * k, ay = a[1] - p[1];
+    const bx = (b[0] - p[0]) * k, by = b[1] - p[1];
+    const dx = bx - ax, dy = by - ay;
+    const longueur2 = dx * dx + dy * dy;
+    let t = longueur2 === 0 ? 0 : -(ax * dx + ay * dy) / longueur2;
+    t = Math.max(0, Math.min(1, t));
+    const x = ax + t * dx, y = ay + t * dy;
+    return Math.sqrt(x * x + y * y) * 111320;
+  }
+
+  // Distance d'un point au trajet (le plus proche de tous les segments)
+  function distanceAuTrace(lonLat, coordonnees) {
+    let minimum = Infinity;
+    for (let i = 0; i < coordonnees.length - 1; i++) {
+      const d = distanceSegment(lonLat, coordonnees[i], coordonnees[i + 1]);
+      if (d < minimum) minimum = d;
+    }
+    return minimum;
+  }
+
+  // Transforme une étape en phrase française
+  function texteInstruction(etape) {
+    if (etape.texte) return etape.texte; // étapes de transport
+    const m = etape.maneuver;
+    const rue = etape.name ? ' sur ' + etape.name : '';
+    const directions = {
+      'left': 'à gauche', 'right': 'à droite',
+      'slight left': 'légèrement à gauche', 'slight right': 'légèrement à droite',
+      'sharp left': 'franchement à gauche', 'sharp right': 'franchement à droite',
+      'straight': 'tout droit'
+    };
+    const direction = directions[m.modifier] || '';
+
+    switch (m.type) {
+      case 'arrive': return 'Vous êtes arrivé';
+      case 'roundabout':
+      case 'rotary': return 'Au rond-point, prenez la sortie ' + (m.exit || '') + rue;
+      case 'turn': return m.modifier === 'uturn' ? 'Faites demi-tour' : 'Tournez ' + direction + rue;
+      case 'fork': return 'Serrez ' + direction + rue;
+      case 'end of road': return 'Au bout de la route, tournez ' + direction + rue;
+      default: return 'Continuez ' + direction + rue;
+    }
+  }
+
+  // Voix de synthèse (Web Speech API)
+  function annoncer(phrase) {
+    if (!('speechSynthesis' in window)) return;
+    window.speechSynthesis.cancel();
+    const voix = new SpeechSynthesisUtterance(phrase);
+    voix.lang = 'fr-FR';
+    window.speechSynthesis.speak(voix);
+  }
+
+  function afficherGuidage(texte, distance) {
+    document.getElementById('guidage-texte').textContent = texte;
+    document.getElementById('guidage-distance').textContent = distance === null ? '' : 'dans ' + formaterDistance(distance);
+    bandeau.style.display = 'block';
+  }
+
+  // ----- Bouchons et perturbations (TomTom, avec ta clé) -----
+  const TYPES_PERTURBATION = {
+    1: 'Accident', 2: 'Brouillard', 3: 'Conditions dangereuses', 4: 'Pluie', 5: 'Verglas', 6: 'Bouchon',
+    7: 'Voie fermée', 8: 'Route fermée', 9: 'Travaux', 10: 'Vent fort', 11: 'Inondation', 14: 'Véhicule en panne'
+  };
+  // Couleur selon la gravité du retard : jaune (léger), orange, rouge (important ou route fermée)
+  const COULEURS_NIVEAU = { 1: '#ffd600', 2: '#ff9100', 3: '#ff1744', 4: '#ff1744' };
+  let avertiCleTomtom = false;
+
+  // Zone qui contient tous les trajets proposés
+  function bornesDesTrajets(liste) {
+    const premier = liste[0].coordonnees[0];
+    const bornes = new maplibregl.LngLatBounds(premier, premier);
+    liste.forEach((p) => p.coordonnees.forEach((point) => bornes.extend(point)));
+    return bornes;
+  }
+
+  // Toutes les perturbations de la zone, sous une forme simple
+  async function chargerIncidents(bornes) {
+    // TomTom refuse les zones trop grandes
+    if ((bornes.getEast() - bornes.getWest()) * (bornes.getNorth() - bornes.getSouth()) > 1) return [];
+    const champs = '{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description},from,to,delay,roadNumbers}}}';
+    const url = 'https://api.tomtom.com/traffic/services/5/incidentDetails?key=' + encodeURIComponent(reglages.cleTomtom) +
+      '&bbox=' + [bornes.getWest(), bornes.getSouth(), bornes.getEast(), bornes.getNorth()].join(',') +
+      '&fields=' + encodeURIComponent(champs) + '&language=fr-FR&timeValidityFilter=present';
+    const donnees = await (await fetch(url)).json();
+
+    const resultat = [];
+    (donnees.incidents || []).forEach((incident) => {
+      const geometrie = incident.geometry;
+      const propriete = incident.properties || {};
+      if (!geometrie || !geometrie.coordinates) return;
+      const estLigne = geometrie.type !== 'Point';
+      const points = estLigne ? geometrie.coordinates : [geometrie.coordinates];
+      const niveau = propriete.iconCategory === 8 ? 4 : (propriete.magnitudeOfDelay || 2);
+      const evenement = propriete.events && propriete.events[0] ? propriete.events[0].description : '';
+      const lieu = (propriete.from || '') + (propriete.to ? ' → ' + propriete.to : '');
+      resultat.push({
+        cle: JSON.stringify(points[0]) + (propriete.iconCategory || ''),
+        titre: TYPES_PERTURBATION[propriete.iconCategory] || 'Perturbation',
+        texte: [evenement, lieu, (propriete.roadNumbers || []).join(', ')].filter(Boolean).join(' · '),
+        retardMin: propriete.delay ? Math.round(propriete.delay / 60) : 0,
+        couleur: COULEURS_NIVEAU[niveau] || '#ff9100',
+        ligne: estLigne,
+        points: points
+      });
+    });
+    return resultat;
+  }
+
+  // Dessine sur la carte les perturbations du trajet choisi
+  function dessinerIncidents() {
+    const source = carte.getSource('incidents');
+    if (!source) return;
+    const morceaux = [];
+    (itineraire && itineraire.incidents ? itineraire.incidents : []).forEach((i) => {
+      if (i.ligne) morceaux.push({ type: 'Feature', properties: { couleur: i.couleur },
+        geometry: { type: 'LineString', coordinates: i.points } });
+      morceaux.push({ type: 'Feature', properties: { couleur: i.couleur },
+        geometry: { type: 'Point', coordinates: i.points[0] } });
+    });
+    source.setData({ type: 'FeatureCollection', features: morceaux });
+  }
+
+  // Résumé du trafic sous les fiches (voiture seulement)
+  function afficherTrafic() {
+    const zone = document.getElementById('trafic-info');
+    zone.innerHTML = '';
+    if (mode !== 'voiture' || !itineraire) return;
+    if (!reglages.cleTomtom) {
+      zone.textContent = 'Bouchons : ajoute une clé TomTom dans Réglages pour les voir.';
+      return;
+    }
+    if (!itineraire.traficCharge) {
+      zone.textContent = 'Analyse du trafic…';
+      return;
+    }
+    if (!itineraire.incidents.length) {
+      const ok = document.createElement('span');
+      ok.className = 'fluide';
+      ok.textContent = '🟢 Trafic fluide sur ce trajet';
+      zone.appendChild(ok);
+      return;
+    }
+    itineraire.incidents.slice(0, 4).forEach((i) => {
+      const ligne = document.createElement('div');
+      ligne.className = 'ligne-trafic';
+      const point = document.createElement('span');
+      point.className = 'point';
+      point.style.background = i.couleur;
+      point.style.color = i.couleur;
+      const texte = document.createElement('div');
+      texte.textContent = i.titre + (i.retardMin ? ' · +' + i.retardMin + ' min' : '');
+      const detail = document.createElement('small');
+      detail.textContent = i.texte;
+      texte.appendChild(detail);
+      ligne.append(point, texte);
+      zone.appendChild(ligne);
+    });
+  }
+
+  function montrerAlerte(incident, nombre) {
+    document.getElementById('alerte-titre').textContent =
+      'Perturbation : ' + incident.titre + (nombre > 1 ? ' (+' + (nombre - 1) + ' autre(s))' : '');
+    document.getElementById('alerte-texte').textContent = incident.texte;
+    document.getElementById('alerte').style.display = 'block';
+    if (navigationActive) annoncer('Attention, ' + incident.titre + ' sur votre trajet.');
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification('Perturbation sur ton trajet', { body: incident.titre + ' : ' + incident.texte });
+    }
+  }
+
+  // Cherche les perturbations sur tous les trajets proposés, puis prévient pendant la navigation
+  async function verifierPerturbations() {
+    afficherTrafic();
+    if (!reglages.cleTomtom || mode !== 'voiture' || !propositions.length) return;
+    const liste = propositions;
+    try {
+      const tous = await chargerIncidents(bornesDesTrajets(liste));
+      if (liste !== propositions) return; // les trajets ont changé entre-temps
+      liste.forEach((p) => {
+        p.incidents = tous.filter((i) => i.points.some((point) => distanceAuTrace(point, p.coordonnees) < 120));
+        p.retardTrafic = p.incidents.reduce((somme, i) => somme + i.retardMin, 0);
+        p.traficCharge = true;
+      });
+      afficherCartes();
+      dessinerIncidents();
+      afficherTrafic();
+
+      if (navigationActive && itineraire) {
+        const nouvelles = itineraire.incidents.filter((i) => !perturbationsVues[i.cle]);
+        if (nouvelles.length) {
+          nouvelles.forEach((i) => { perturbationsVues[i.cle] = true; });
+          montrerAlerte(nouvelles[0], nouvelles.length);
+        }
+      }
+    } catch (erreur) {
+      console.warn('Trafic indisponible', erreur);
+      if (!avertiCleTomtom) {
+        avertiCleTomtom = true;
+        afficherMessage('Trafic indisponible : vérifie ta clé TomTom.', 5000);
+      }
+    }
+  }
+
+  // ----- Autres itinéraires et recalcul -----
+  // Recalcule depuis la position actuelle (sortie de route, par exemple)
+  async function recalculerDepuisPosition(lonLat, raison) {
+    dernierRecalcul = Date.now();
+    ecartsConsecutifs = 0;
+    afficherMessage(raison + ' : recalcul…', 5000);
+    try {
+      const nouvelles = await chargerPropositions(lonLat, lieuArrivee.coord);
+      if (!nouvelles.length || !navigationActive) return;
+      propositions = nouvelles;
+      choisie = 0;
+      appliquerProposition(false);
+      verifierPerturbations();
+      annoncer('Itinéraire recalculé');
+    } catch (erreur) {
+      afficherMessage('Recalcul impossible pour le moment.');
+    }
+  }
+
+  // Bouton "Autres itinéraires" pendant la navigation : on propose d'autres trajets depuis ici
+  async function ouvrirAutresItineraires() {
+    if (!navigationActive || !dernierePosition || !lieuArrivee) {
+      afficherMessage('Position inconnue pour le moment.');
+      return;
+    }
+    afficherMessage('Recherche d\u2019autres itinéraires…');
+    try {
+      const nouvelles = await chargerPropositions(dernierePosition, lieuArrivee.coord);
+      if (!nouvelles.length) { afficherMessage('Pas d\u2019autre itinéraire trouvé.'); return; }
+      propositions = nouvelles;
+      choisie = 0;
+      appliquerProposition(false);
+      verifierPerturbations();
+      zoneInfos.classList.add('choix-ouvert');
+    } catch (erreur) {
+      afficherMessage('Recherche impossible : vérifie ta connexion.');
+    }
+  }
+
+  // Appelée à chaque nouvelle position (réelle ou simulée)
+  function nouvellePosition(lonLat, capGps) {
+    placerMarqueurPosition(lonLat);
+
+    // Cap : celui du GPS s'il existe, sinon la direction du dernier déplacement
+    let cap = capGps;
+    if (!Number.isFinite(cap) && dernierePosition && distanceMetres(dernierePosition, lonLat) > 5) {
+      cap = calculerCap(dernierePosition, lonLat);
+    }
+    if (!Number.isFinite(cap)) cap = carte.getBearing();
+    dernierePosition = lonLat;
+
+    // La caméra suit la position, vue de derrière
+    carte.easeTo({ center: lonLat, bearing: cap, zoom: 18, pitch: 65,
+      offset: [0, 150], duration: 400, easing: (t) => t });
+
+    verifierLieu(lonLat);
+
+    // Si on s'écarte du trajet (3 mesures de suite), on recalcule tout seul
+    if (mode !== 'transport' && itineraire && lieuArrivee) {
+      if (distanceAuTrace(lonLat, itineraire.coordonnees) > 60) ecartsConsecutifs++;
+      else ecartsConsecutifs = 0;
+      if (ecartsConsecutifs >= 3 && Date.now() - dernierRecalcul > 15000) {
+        recalculerDepuisPosition(lonLat, 'Tu t\u2019es écarté de l\u2019itinéraire');
+        return;
+      }
+    }
+
+    // Une fois par minute, on regarde s'il y a une perturbation sur le trajet
+    if (reglages.cleTomtom && mode === 'voiture' && Date.now() - derniereVerifTrafic > 60000) {
+      derniereVerifTrafic = Date.now();
+      verifierPerturbations();
+    }
+
+    mettreAJourGuidage(lonLat);
+  }
+
+  function mettreAJourGuidage(lonLat) {
+    const etapes = itineraire.etapes;
+    let prochaine = etapes[indexEtape + 1];
+    let distance = distanceMetres(lonLat, prochaine.maneuver.location);
+    const rayon = prochaine.rayon || 30;
+
+    if (distance < rayon) {
+      if (prochaine.maneuver.type === 'arrive') {
+        afficherGuidage('Vous êtes arrivé', null);
+        annoncer('Vous êtes arrivé');
+        arreterNavigation(true);
+        return;
+      }
+      // On a passé ce virage : on passe au suivant
+      indexEtape++;
+      prochaine = etapes[indexEtape + 1];
+      distance = distanceMetres(lonLat, prochaine.maneuver.location);
+      annoncer('Dans ' + formaterDistance(distance) + ', ' + texteInstruction(prochaine).toLowerCase());
+    }
+    afficherGuidage(texteInstruction(prochaine), distance);
+  }
+
+  function demarrerNavigation() {
+    if (!itineraire) return;
+    navigationActive = true;
+    indexEtape = 0;
+    dernierePosition = null;
+    ecartsConsecutifs = 0;
+    dernierRecalcul = Date.now();
+    derniereVerifTrafic = 0;
+
+    document.getElementById('modes').style.display = 'none';
+    zoneInfos.classList.add('navigation');
+    zoneInfos.classList.remove('choix-ouvert');
+    majBoutons();
+
+    // Pour être prévenu d'une perturbation même si l'onglet est en arrière-plan
+    if (reglages.cleTomtom && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+
+    const premiere = itineraire.etapes[1];
+    annoncer('Dans ' + formaterDistance(itineraire.etapes[0].distance) + ', ' + texteInstruction(premiere).toLowerCase());
+
+    if (!navigator.geolocation) {
+      afficherMessage('Géolocalisation non disponible sur ce navigateur.');
+      arreterNavigation(false);
+      return;
+    }
+    idSuivi = navigator.geolocation.watchPosition(
+      (pos) => nouvellePosition([pos.coords.longitude, pos.coords.latitude], pos.coords.heading),
+      () => afficherMessage('Position indisponible. Utilise localhost ou https.'),
+      { enableHighAccuracy: true }
+    );
+  }
+
+  // Bouton "Aller" : on part toujours de la position réelle, même si le départ choisi était ailleurs
+  async function aller() {
+    if (!itineraire) return;
+    try {
+      afficherMessage('Recherche de ta position…', 3000);
+      const lonLat = await positionActuelle();
+      placerMarqueurPosition(lonLat);
+      definirDepart(null);
+      await calculerItineraire(); // trajet recalculé depuis ici
+    } catch (erreur) {
+      afficherMessage('Position indisponible : impossible de te guider (localhost ou https requis).');
+      return;
+    }
+    demarrerNavigation();
+  }
+
+  // Arrête le suivi (et la position n'est plus lue du tout)
+  function arreterNavigation(arrivee) {
+    navigationActive = false;
+    if (idSuivi !== null) { navigator.geolocation.clearWatch(idSuivi); idSuivi = null; }
+    if (!arrivee && window.speechSynthesis) { window.speechSynthesis.cancel(); }
+
+    document.getElementById('modes').style.display = 'flex';
+    zoneInfos.classList.remove('navigation', 'choix-ouvert');
+    bandeau.style.display = arrivee ? 'block' : 'none';
+    if (arrivee) setTimeout(() => { if (!navigationActive) bandeau.style.display = 'none'; }, 6000);
+    effacerItineraire();
+    majBoutons();
+  }
+
+  boutonAller.addEventListener('click', aller);
+  boutonArreter.addEventListener('click', () => arreterNavigation(false));
+  boutonAutres.addEventListener('click', ouvrirAutresItineraires);
+  document.getElementById('btn-alerte-ok').addEventListener('click', () => {
+    document.getElementById('alerte').style.display = 'none';
+  });
+  document.getElementById('btn-alerte-autres').addEventListener('click', () => {
+    document.getElementById('alerte').style.display = 'none';
+    if (navigationActive) ouvrirAutresItineraires();
+  });
+
+  // Clé TomTom (réglages)
+  const saisieCle = document.getElementById('saisie-cle-tomtom');
+  saisieCle.value = reglages.cleTomtom;
+  saisieCle.addEventListener('change', () => {
+    reglages.cleTomtom = saisieCle.value.trim();
+    sauverReglages();
+    avertiCleTomtom = false;
+    if (propositions.length) verifierPerturbations();
+  });
+</script>
+</body>
+</html>
